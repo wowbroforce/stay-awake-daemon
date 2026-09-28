@@ -1,0 +1,10 @@
+[Unit]
+Description=Stay-awake daemon for Minecraft + Jellyfin activity
+
+[Service]
+ExecStart=%h/.local/bin/stay-awake-daemon
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=default.target

@@ -1,0 +1,14 @@
+{
+  "pollIntervalSeconds": 30,
+  "minecraft": {
+    "description": "Living room server",
+    "host": "127.0.0.1",
+    "port": 25575,
+    "password": "CHANGE_ME"
+  },
+  "jellyfin": {
+    "description": "Living room Jellyfin",
+    "url": "http://127.0.0.1:8096/Sessions",
+    "apiKey": "CHANGE_ME"
+  }
+}

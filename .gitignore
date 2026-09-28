@@ -1,0 +1,16 @@
+# SwiftPM build output
+.build/
+.swiftpm/
+*.o
+*.swp
+
+# Local config with credentials (only config.example.json is tracked)
+config.json
+
+# Release artifacts
+dist/
+
+# Editor / OS
+.DS_Store
+.idea/
+.vscode/
