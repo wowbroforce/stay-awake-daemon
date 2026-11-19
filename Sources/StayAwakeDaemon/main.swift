@@ -1,4 +1,8 @@
+#if canImport(Musl)
+import Musl
+#elseif canImport(Glibc)
 import Glibc
+#endif
 
 // Set by the signal handler; checked in the poll loop. A plain top-level Int32
 // write/read is the conventional sig_atomic_t-equivalent here (single word,

@@ -9,6 +9,21 @@ config.json
 
 # Release artifacts
 dist/
+*.tar
+*.tar.gz
+*.tgz
+*.tar.xz
+*.tar.bz2
+*.zip
+
+# Compiled binaries / objects
+*.so
+*.so.*
+*.a
+*.dylib
+*.dll
+*.exe
+stay-awake-daemon
 
 # Editor / OS
 .DS_Store

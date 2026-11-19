@@ -1,5 +1,9 @@
 import Foundation
+#if canImport(Musl)
+import Musl
+#elseif canImport(Glibc)
 import Glibc
+#endif
 
 // Minecraft RCON client (Source RCON protocol over raw TCP)
 
@@ -18,7 +22,7 @@ final class RCONClient {
     private var socketFD: Int32 = -1
 
     func connect(host: String, port: UInt16) throws {
-        socketFD = socket(AF_INET, Int32(SOCK_STREAM.rawValue), 0)
+        socketFD = socket(AF_INET, sysSockStream, 0)
         guard socketFD >= 0 else { throw RCONError(message: "socket() failed") }
 
         var addr = sockaddr_in()
@@ -30,7 +34,7 @@ final class RCONClient {
 
         let result = withUnsafePointer(to: &addr) { ptr -> Int32 in
             ptr.withMemoryRebound(to: sockaddr.self, capacity: 1) { sockPtr in
-                Glibc.connect(socketFD, sockPtr, socklen_t(MemoryLayout<sockaddr_in>.size))
+                sysConnect(socketFD, sockPtr, socklen_t(MemoryLayout<sockaddr_in>.size))
             }
         }
         guard result == 0 else { throw RCONError(message: "connect() failed (is rcon.enabled=true?)") }
@@ -41,7 +45,7 @@ final class RCONClient {
     }
 
     func close() {
-        if socketFD >= 0 { Glibc.close(socketFD) }
+        if socketFD >= 0 { sysClose(socketFD) }
         socketFD = -1
     }
 
@@ -61,7 +65,7 @@ final class RCONClient {
             guard let base = rawBuf.baseAddress else { return }
             var totalSent = 0
             while totalSent < packet.count {
-                let sent = Glibc.send(socketFD, base + totalSent, packet.count - totalSent, 0)
+                let sent = sysSend(socketFD, base + totalSent, packet.count - totalSent, 0)
                 guard sent > 0 else { throw RCONError(message: "send() failed") }
                 totalSent += sent
             }
@@ -74,7 +78,7 @@ final class RCONClient {
         try buffer.withUnsafeMutableBytes { (rawBuf: UnsafeMutableRawBufferPointer) in
             guard let base = rawBuf.baseAddress else { return }
             while totalRead < count {
-                let n = Glibc.recv(socketFD, base + totalRead, count - totalRead, 0)
+                let n = sysRecv(socketFD, base + totalRead, count - totalRead, 0)
                 guard n > 0 else { throw RCONError(message: "recv() failed or connection closed") }
                 totalRead += n
             }
