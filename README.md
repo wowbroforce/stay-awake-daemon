@@ -10,7 +10,7 @@ even though a remote player is connected/streaming.
 
 - Polls the local Minecraft server via **RCON** (`list` command) every
   `pollIntervalSeconds` (default 30s) to check for connected players. RCON is
-  implemented from scratch over a raw TCP socket (Source RCON protocol) ,
+  implemented from scratch over a raw TCP socket (Source RCON protocol),
   no external library.
 - Polls the local **Jellyfin** `/Sessions` API and checks for any session
   with a non-null `NowPlayingItem` (actual playback, not just an idle
@@ -18,15 +18,31 @@ even though a remote player is connected/streaming.
 - If either check is true, spawns `systemd-inhibit --what=sleep:idle ... sleep infinity`
   and holds onto that child process; if both go false, kills it, releasing
   the lock. State only changes on transitions, not every poll.
+- On `SIGTERM`/`SIGINT` the current poll finishes, the inhibitor lock is
+  released explicitly, and the daemon exits, so stopping the service never
+  leaves a stray lock (or a stray `sleep infinity`) behind.
 
 ## Requirements
 
 - Minecraft server: `rcon.enabled=true`, `rcon.password=...`, and note
   `rcon.port` (default `25575`) in `server.properties`.
 - Jellyfin: an API key from **Dashboard: API Keys**.
-- Built binary needs only standard system libs at runtime (glibc, libcurl,
-  libssl, libstdc++, etc.), see "Static build" below. No Swift toolchain
-  needed on the machine that *runs* it, only to build it.
+- `systemd-inhibit` at `/usr/bin/systemd-inhibit`, and a systemd user
+  session/D-Bus to take the lock against.
+- No Swift toolchain on the machine that *runs* the daemon, only to build
+  it. The fully static build (see "Build") has no runtime library
+  dependencies at all; the default build needs the usual system libs
+  (glibc, libcurl, libssl, libstdc++).
+
+## Usage
+
+```
+stay-awake-daemon [config-path] [--help|-h]
+```
+
+`--help` prints the full config reference (every field, its type and its
+default) and exits; it is generated from the same defaults the daemon uses,
+so it is always in sync with the binary you are holding.
 
 ## Configuration
 
@@ -82,22 +98,80 @@ daemon looks for the config file in this order:
 3. `$XDG_CONFIG_HOME/stay-awake-daemon/config.json`, or
    `~/.config/stay-awake-daemon/config.json` if `XDG_CONFIG_HOME` isn't set.
 
-If no config file is found, or it fails to parse, the daemon logs a warning
-to stderr and falls back to defaults (RCON/Jellyfin checks will simply fail
-until it's fixed, it doesn't crash).
+If no config file is found, or it fails to parse, the daemon logs the reason
+to stderr and continues with no sections configured. In that state it has
+nothing to monitor, so it logs that too and idles forever without ever
+inhibiting sleep - it does not crash, and it does not silently hold the
+machine awake.
+
+## Install from a release
+
+The one-line installer downloads a release tarball, verifies its
+`.sha256` if one is published, installs the binary to `~/.local/bin`, the
+systemd user unit to `~/.config/systemd/user/`, and seeds
+`~/.config/stay-awake-daemon/config.json` from the example if you don't
+already have one:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/wowbroforce/stay-awake-daemon/main/install.sh | bash
+```
+
+It deliberately does not enable the service, start it, or touch
+`loginctl`; it prints those steps instead (see "Deploy as a systemd user
+service"). Pass a tag to pin a version, either as an argument or via
+`$STAY_AWAKE_VERSION`; with neither, it resolves the latest GitHub release:
+
+```bash
+curl -fsSL .../install.sh | bash -s -- v0.1.0-alpha
+```
+
+The script expects the release asset to be named
+`stay-awake-daemon-<tag>-linux-x86_64.tar.gz`, containing `StayAwakeDaemon`,
+`config.example.json` and `stay-awake-daemon.service` at the archive root.
 
 ## Build
 
-Swift toolchain is already available on this host via `swiftly`:
+Swift toolchain is available on this host via `swiftly`. Two builds are
+supported; both produce a single self-contained binary, neither needs Swift
+on the target machine.
+
+**Default (glibc, portable within the distro family):**
 
 ```bash
 swift build -c release --static-swift-stdlib
 ```
 
-This statically links the Swift runtime into the binary (confirmed via
-`ldd`, no `libswift*.so` dependencies), so the result runs on this host,
-or any similar glibc Linux system, without needing Swift installed. The
-built binary lands at `.build/release/StayAwakeDaemon`.
+This statically links the Swift runtime (confirmed via `ldd`, no
+`libswift*.so` dependencies) but still links the usual system libraries
+dynamically (glibc, libcurl, libssl, libstdc++, libgcc). The binary lands
+at `.build/release/StayAwakeDaemon` and runs on this host or a similar
+glibc Linux system.
+
+**Fully static (musl, portable anywhere x86_64 Linux):**
+
+```bash
+swift build -c release --swift-sdk x86_64-swift-linux-musl
+```
+
+This needs the Swift static Linux SDK installed once, matching the
+toolchain in use (`swift-6.3-RELEASE_static-linux-0.1.0` here; check with
+`swift sdk list`). Install it with
+`swift sdk install <url> --checksum <sha256>`, taking both values from the
+"Static Linux SDK" download on <https://www.swift.org/install/linux/>,
+since the checksum changes per release.
+
+The static SDK links musl and everything else in: `ldd` reports "not a
+dynamic executable", so the result runs on any x86_64 Linux regardless of
+glibc version. This is what the deploy target
+(Bazzite, an atomic Fedora variant) wants. The binary lands at
+`.build/x86_64-swift-linux-musl/release/StayAwakeDaemon` and is large
+because it is unstripped; `strip` cuts it from roughly 158M to 62M and is
+worth doing before packaging a release.
+
+Supporting the static SDK is why `Sources/StayAwakeDaemon/PlatformLibc.swift`
+exists: the platform libc module is `Glibc` in the default build and `Musl`
+in the static one, so the socket calls in `RCONClient` go through thin
+`sys*` wrappers instead of module-qualified names.
 
 ## Deploy as a systemd user service
 
@@ -132,65 +206,30 @@ is the sole thing deciding whether the machine may sleep.
 
 ## Distribution options
 
-The build already produces a single statically-linked binary (no Swift
-runtime dependency), which makes it easy to hand off in several ways. None
-of these are wired up in this repo yet (no CI, no packaging files), this is
-a reference for the tradeoffs if/when it's worth automating.
+The build produces a single self-contained binary, which makes it easy to
+hand off. Both steps below are in place: `install.sh` is in the repo and
+releases are built by hand. There is still no CI, so tagging, building and
+uploading a release is a manual step.
 
-- **Tarball via GitHub Releases** (simplest, least setup). Build with
-  `swift build -c release --static-swift-stdlib`, then archive the binary
-  together with `config.example.json` and `stay-awake-daemon.service`:
+- **Tarball via GitHub Releases** (simplest, least setup). Build, then
+  archive the binary together with `config.example.json` and
+  `stay-awake-daemon.service`:
   ```bash
-  tar -czf stay-awake-daemon.tar.gz \
-    -C .build/release StayAwakeDaemon \
-    config.example.json stay-awake-daemon.service
+  tar -czf stay-awake-daemon-v0.1.1-alpha-linux-x86_64.tar.gz \
+    -C .build/x86_64-swift-linux-musl/release StayAwakeDaemon \
+    -C "$OLDPWD" config.example.json stay-awake-daemon.service
+  sha256sum stay-awake-daemon-v0.1.1-alpha-linux-x86_64.tar.gz \
+    > stay-awake-daemon-v0.1.1-alpha-linux-x86_64.tar.gz.sha256
   ```
-  Upload as a release asset. Consumers download, extract, and follow the
-  "Deploy as a systemd user service" steps above. No PKGBUILD, formula, or
-  Dockerfile to maintain, just a build + upload step, which could later be
-  a GitHub Actions job that runs on tag push.
+  Upload both as release assets. Consumers run `install.sh`, or extract and
+  follow the "Deploy as a systemd user service" steps above. Just a build +
+  upload step, which could later be a GitHub Actions job that runs on tag
+  push. Local release artifacts live in `dist/`, which is gitignored.
 
-- **One-line install script**. A small `install.sh` (hosted in the repo or a
-  release asset) that curls the latest release tarball, extracts the binary
-  to `~/.local/bin`, and copies the `.service` file into
-  `~/.config/systemd/user/`, i.e. scripting the manual steps above.
-  Convenient for the target HTPC, but means telling people to
-  `curl | bash`, which is fine for personal use but worth a warning if
-  shared more widely.
-
-- **AUR package** (`PKGBUILD`). A natural fit since the dev machine is
-  Arch-based (Omarchy); less useful for the actual deploy target
-  (Bazzite/Fedora atomic), so only worth it if this ends up running on
-  Arch-family boxes too. Would need a `PKGBUILD` that runs `swift build`
-  from source (Arch ships a Swift toolchain) or downloads the prebuilt
-  binary, plus installing the `.service` file to
-  `/usr/lib/systemd/user/`.
-
-- **Homebrew tap** (Linuxbrew). Cross-distro, doesn't require root, and
-  Homebrew already knows how to install a systemd user unit via
-  `service`/`plist`-style formula hooks (Linux support is less polished
-  than macOS's here). Reasonable middle ground between the tarball and a
-  full native package, but adds a tap repo to maintain.
-
-- **Nix flake**. Gives a fully reproducible build (pinned Swift toolchain)
-  and an installable systemd unit via `nix run`/home-manager module.
-  Highest setup cost of these options, but the most reproducible, and a
-  good fit if the user ever moves to NixOS.
-
-- **Native distro packages (.rpm/.deb)**. Possible via `fpm` or similar,
-  but Bazzite is an immutable/atomic Fedora variant (rpm-ostree) where
-  layering RPMs is a heavier operation than dropping a binary in
-  `~/.local/bin`, not worth the overhead for a single-user tool like this.
-
-- **Docker/OCI image**. Deliberately not a good fit: the daemon's whole job
-  is calling `systemd-inhibit`, which needs the host's systemd/D-Bus user
-  session. Running it in a container would mean bind-mounting the host
-  session bus and losing most of the isolation benefit anyway, so this
-  doesn't earn its complexity here.
-
-Given this is a single-user/single-HTPC tool, the tarball (optionally
-wrapped in the install script) covers the actual need; the rest only pay
-off if this ever needs to support other machines or other people.
+- **One-line install script**. `install.sh` in the repo root, run via
+  `curl | bash` as shown under "Install from a release". Convenient for the
+  target HTPC, but means telling people to `curl | bash`, which is fine for
+  personal use but worth a warning if shared more widely.
 
 ## Known limitations
 
@@ -198,5 +237,17 @@ off if this ever needs to support other machines or other people.
   for `list` output on a normal server but wouldn't handle a response
   fragmented across multiple RCON packets (only matters for very long
   command output, not relevant here).
+- The player count is parsed out of the English vanilla `list` wording
+  ("There are N of a max of M players online"). A server (or plugin) that
+  rewords or localizes that reply reads as zero players.
+- RCON connects by IP only (`inet_pton`), so `minecraft.host` must be a
+  literal IPv4 address, not a hostname like `localhost`.
+- Paused Jellyfin playback still counts as activity, since a paused session
+  keeps a non-null `NowPlayingItem`. That is usually what you want on an
+  HTPC (nobody wants the machine to suspend during a pause), but it means a
+  session left paused overnight holds the lock until the client disconnects.
+- Each poll is synchronous and the checks run one after another, so a
+  network stall can stretch a cycle by up to the RCON (5s) and Jellyfin
+  (10s) timeouts before the next sleep begins.
 - Config file is plain JSON on disk (not permissions-checked or encrypted),
   so credentials in it are only as safe as normal file permissions make them.
