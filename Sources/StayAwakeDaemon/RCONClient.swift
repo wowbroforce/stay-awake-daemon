@@ -32,16 +32,16 @@ final class RCONClient {
             throw RCONError(message: "invalid RCON host address")
         }
 
+        var tv = timeval(tv_sec: 5, tv_usec: 0)
+        setsockopt(socketFD, SOL_SOCKET, SO_RCVTIMEO, &tv, socklen_t(MemoryLayout<timeval>.size))
+        setsockopt(socketFD, SOL_SOCKET, SO_SNDTIMEO, &tv, socklen_t(MemoryLayout<timeval>.size))
+
         let result = withUnsafePointer(to: &addr) { ptr -> Int32 in
             ptr.withMemoryRebound(to: sockaddr.self, capacity: 1) { sockPtr in
                 sysConnect(socketFD, sockPtr, socklen_t(MemoryLayout<sockaddr_in>.size))
             }
         }
         guard result == 0 else { throw RCONError(message: "connect() failed (is rcon.enabled=true?)") }
-
-        var tv = timeval(tv_sec: 5, tv_usec: 0)
-        setsockopt(socketFD, SOL_SOCKET, SO_RCVTIMEO, &tv, socklen_t(MemoryLayout<timeval>.size))
-        setsockopt(socketFD, SOL_SOCKET, SO_SNDTIMEO, &tv, socklen_t(MemoryLayout<timeval>.size))
     }
 
     func close() {
@@ -93,11 +93,13 @@ final class RCONClient {
 
     private func recvPacket() throws -> (requestID: Int32, type: Int32, body: String) {
         let length = try readInt32LE()
-        var payload = try readExactly(Int(length))
+        guard (10...65536).contains(length) else {
+            throw RCONError(message: "invalid RCON packet length \(length)")
+        }
+        let payload = try readExactly(Int(length))
         let requestID = payload[0..<4].withUnsafeBytes { $0.load(as: Int32.self) }.littleEndian
         let type = payload[4..<8].withUnsafeBytes { $0.load(as: Int32.self) }.littleEndian
         let body = String(decoding: payload[8..<(payload.count - 2)], as: UTF8.self)
-        payload.removeAll() // silence unused-mutation warning
         return (requestID, type, body)
     }
 

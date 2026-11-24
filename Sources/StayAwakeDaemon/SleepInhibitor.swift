@@ -6,6 +6,10 @@ final class SleepInhibitor {
     private var process: Process?
 
     func setActive(_ active: Bool) {
+        if let p = process, !p.isRunning {
+            logError("systemd-inhibit exited unexpectedly (status \(p.terminationStatus)) - sleep lock is NOT held")
+            process = nil
+        }
         if active && process == nil {
             log("Activity detected -> taking sleep inhibitor lock")
             let p = Process()

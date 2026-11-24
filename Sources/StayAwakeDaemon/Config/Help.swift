@@ -29,7 +29,7 @@ func printHelp() {
     leaving it pointed at defaults that will just fail.
 
     Top-level fields:
-      pollIntervalSeconds  UInt32  seconds between checks  (default: \(defaultInterval))
+      pollIntervalSeconds  UInt32  seconds between checks  (default: \(defaultInterval), min: \(AppConfig.minPollIntervalSeconds))
 
     "minecraft" section fields (all optional if the section is present):
       description  String  Label used in log messages  (default: none)

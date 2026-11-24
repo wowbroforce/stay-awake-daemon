@@ -21,11 +21,19 @@ struct JellyfinConfig: Decodable {
         description = try container.decodeIfPresent(String.self, forKey: .description) ?? defaults.description
         url = try container.decodeIfPresent(String.self, forKey: .url) ?? defaults.url
         apiKey = try container.decodeIfPresent(String.self, forKey: .apiKey) ?? defaults.apiKey
+        guard resolvedURL != nil else {
+            throw DecodingError.dataCorruptedError(
+                forKey: .url, in: container,
+                debugDescription: "jellyfin.url must be an http(s) URL, got \"\(url)\"")
+        }
     }
 
-    var resolvedURL: URL {
-        guard let resolved = URL(string: url) else {
-            fatalError("Invalid jellyfin.url in container: \(url)")
+    var resolvedURL: URL? {
+        guard let resolved = URL(string: url),
+              let scheme = resolved.scheme?.lowercased(),
+              scheme == "http" || scheme == "https",
+              resolved.host != nil else {
+            return nil
         }
         return resolved
     }

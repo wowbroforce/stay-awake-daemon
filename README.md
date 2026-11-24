@@ -200,10 +200,6 @@ systemctl --user status stay-awake-daemon.service
 journalctl --user -u stay-awake-daemon.service -f
 ```
 
-Also make sure Steam's own Game Mode **Auto-Suspend** timer isn't fighting
-this daemon, turn it off (Steam button -> Settings -> Power) so this daemon
-is the sole thing deciding whether the machine may sleep.
-
 ## Distribution options
 
 The build produces a single self-contained binary, which makes it easy to

@@ -23,6 +23,7 @@ if CommandLine.arguments.contains("--help") || CommandLine.arguments.contains("-
 // terminate-immediately disposition.
 signal(SIGTERM, handleTerminationSignal)
 signal(SIGINT, handleTerminationSignal)
+signal(SIGPIPE, SIG_IGN)
 
 let config = loadConfig()
 let inhibitor = SleepInhibitor()
